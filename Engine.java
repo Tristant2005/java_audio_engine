@@ -20,7 +20,8 @@ public class Engine {
 
     // The audio format is the 
     private AudioFormat audio_format;
-    private volatile SourceDataLine line; 
+    private volatile SourceDataLine line;
+    private volatile boolean line_exist; 
 
     /*
     The audio_format describes how to read the raw bytes of a track. 
@@ -52,6 +53,15 @@ public class Engine {
 
     public boolean is_finished(){
         return finished;
+    }
+
+    public void set_file(File songpath){
+        file = songpath;
+    }
+
+    public void close(){
+        line.drain();
+        line.close();
     }
 
     // for a file, read its header info to get format information
@@ -130,14 +140,18 @@ public class Engine {
         }
     }
     
+    
     // done by worker thread
     private void play_music_thread() {
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
 
         // build and start audio stream line
-        line = AudioSystem.getSourceDataLine(audio_format);
-        line.open(audio_format);
-        line.start();
+        if (!line_exist){
+            line = AudioSystem.getSourceDataLine(audio_format);
+            line.open(audio_format);
+            line.start();
+            line_exist = true;
+        }
 
         // skip headder
         raf.seek(data_offset);
@@ -160,12 +174,12 @@ public class Engine {
         }
 
         // let the last buffered audio finish
-        if (!stop_requested) {
-            line.drain();  
-        }
+        // if (!stop_requested) {
+        //     line.drain();  
+        // }
 
-        // close the audio line
-        line.close();
+        // // close the audio line
+        // line.close();
 
         } catch (Exception e){
             // for any error, print the stack trace
@@ -187,6 +201,17 @@ public class Engine {
         // set class variables
         stop_requested = false;
         finished = false;
+
+        // check line
+        // if the current line's set format isn't equal to new incomming audio_format
+        if (line_exist && !line.getFormat().matches(audio_format)){
+            line.drain();
+            line.close();
+            line_exist = false;
+            // System.out.println("song did not match format. New line being created.");
+        } 
+        
+        // start thread
         worker = new Thread(this::play_music_thread);
         worker.start();
     }

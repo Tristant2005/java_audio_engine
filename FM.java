@@ -45,6 +45,9 @@ Inprovement
 public class FM{
     // set a permanent CD directory
     final public static String CD_DIRECTORY = "/Volumes";
+    static final String RESET = "\033[0m";
+    static final String PINK = "\033[95m";
+    static final String PURPLE = "\u001B[35m";
 
     // Everything we need from the TOC, in one place
     static class TocInfo {
@@ -74,7 +77,7 @@ public class FM{
         int index = 1;
         for (File f : tracks){
             if (index == current_position){
-                System.out.println("> " + f.getName());
+                System.out.println(PINK + "> " + f.getName() + RESET);
             } else {
                 System.out.println(f.getName());
             }
@@ -263,12 +266,14 @@ public class FM{
 
 
     // playsong with clock
-    static int playsong(File songpath, long playlist_start, String total_str) {
+    static int playsong(File songpath, Engine engine, long playlist_start, String total_str) {
         try {
 
-            Engine engine = new Engine();
-            System.out.println("about to start song");
 
+            // Engine engine = new Engine();
+            // engine.load_header(songpath)
+
+            System.out.println("about to start song");
             engine.start(songpath);
 
             // int ticks = 0;
@@ -313,10 +318,12 @@ public class FM{
         int status = 1;
         int index = 1;
 
-        String time_estimation = format_time(total_time);
-
         // one stopwatch for the whole playlist
+        String time_estimation = format_time(total_time);
         long playlist_start = System.nanoTime();
+
+        // make engine class and load header. This should remain consistent for all songs on a CD
+        Engine engine = new Engine();
 
         for (File song : playlist){
             cls();
@@ -328,9 +335,11 @@ public class FM{
             System.out.println("Songname: " + songname);
             System.out.println("Starting Track: " + String.valueOf(index) + "/" + String.valueOf(playlist.size()));
 
-            status = playsong(song, playlist_start, time_estimation);
+            status = playsong(song, engine, playlist_start, time_estimation);
             index++;
         }
+
+        engine.close();
 
         return status;
     }
