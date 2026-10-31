@@ -1,3 +1,5 @@
+// javac *.java
+
 // Imports
 import java.io.File;
 import java.io.IOException;
@@ -17,6 +19,9 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
+
+// sound stuff
+// import javax.sound.sampled.*;
 
 /*
 How to use:
@@ -48,6 +53,8 @@ public class FM{
     static final String RESET = "\033[0m";
     static final String PINK = "\033[95m";
     static final String PURPLE = "\u001B[35m";
+    static String saved_tty = null;
+    static long paused_total = 0;
 
     // Everything we need from the TOC, in one place
     static class TocInfo {
@@ -55,6 +62,26 @@ public class FM{
         int lastTrack;
         int leadoutBlock;
         ArrayList<Integer> offsets = new ArrayList<Integer>();
+    }
+
+    // deliver keys immediately and don't echo them
+    static void raw_mode_on() throws Exception {
+        // remember the current settings so we can restore them exactly
+        Process p = new ProcessBuilder("sh", "-c", "stty -g < /dev/tty").start();
+        saved_tty = new String(p.getInputStream().readAllBytes()).trim();
+        p.waitFor();
+
+        new ProcessBuilder("sh", "-c", "stty -icanon -echo < /dev/tty").inheritIO().start().waitFor();
+    }
+
+    static void raw_mode_off() {
+        try {
+            // check if raw_mode_on() ever called
+            String restore = (saved_tty == null || saved_tty.isEmpty()) ? "sane" : saved_tty;
+            new ProcessBuilder("sh", "-c", "stty " + restore + " < /dev/tty").inheritIO().start().waitFor();
+        } catch (Exception ignored) { 
+            ;
+        }
     }
 
     // function to clear terminal screen
@@ -272,14 +299,46 @@ public class FM{
 
             // Engine engine = new Engine();
             // engine.load_header(songpath)
+            boolean paused = false;
+            long pause_started = 0;
 
             System.out.println("about to start song");
             engine.start(songpath);
 
+
             // int ticks = 0;
             while (!engine.is_finished()) {
-                print_clock(playlist_start, total_str);
-                Thread.sleep(250);
+                // check for keys that were pressed since the last pass
+                boolean toggle = false;
+
+                // tells you whether a key is waiting
+                while (System.in.available() > 0) {
+                    int key = System.in.read();
+                    // pause if space, enter, or P pressed
+                    if (key == ' ' || key == '\r' || key == '\n' || key == 'p' || key == 'P') {
+                        toggle = true; 
+                    }
+                }
+
+                // pause or resume
+                if (toggle){
+                    if (!paused){
+                        // pause player
+                        engine.pause();
+                        pause_started = System.nanoTime();
+                    } else {
+                        // resume player
+                        engine.resume();
+                        paused_total += System.nanoTime() - pause_started;
+                    }
+                    paused = !paused;
+                }
+
+                // use paused total for elapsed time calculation
+                if (!paused) {
+                    print_clock(playlist_start + paused_total, total_str);
+                }
+                Thread.sleep(50);
             }
 
 
@@ -442,7 +501,7 @@ public class FM{
 
 
 
-    public static void handle_user_input(Scanner scan, ArrayList<File> tracks, String disk_ID, TocInfo toc){
+    public static void handle_user_input(Scanner scan, ArrayList<File> tracks, String disk_ID, TocInfo toc) throws Exception {
         int tracklength = tracks.size();
 
         boolean exit_condition_met = false;
@@ -483,6 +542,10 @@ public class FM{
             double total_time = total_seconds(toc, songs_to_play);
             String time_estimation = format_time(total_time);
 
+            // for (Mixer.Info info : AudioSystem.getMixerInfo()) {
+            //     System.out.println(info.getName() + " : " + info.getDescription());
+            // }
+
 
             System.out.print("\nTotal time estimation: " + time_estimation);
             System.out.print("\nIs this ok? (yes, no): ");
@@ -493,11 +556,18 @@ public class FM{
 
                 // System.out.println(("coolio"));
 
-                // Play the song
-                int status = start_playlist(playlist, songs_to_play, total_time);
+                // allow for user input in the playlist
+                raw_mode_on();
+                try{
+                    // Play the song
+                    int status = start_playlist(playlist, songs_to_play, total_time);
+                
+                    if (status == 1){
+                        System.out.println("Successfull Exit");
+                    }
 
-                if (status == 1){
-                    System.out.println("Successfull Exit");
+                } finally {
+                    raw_mode_off();
                 }
 
             } else {
@@ -511,6 +581,8 @@ public class FM{
 
 
     public static void main(String[] args) throws Exception{
+        Runtime.getRuntime().addShutdownHook(new Thread(FM::raw_mode_off));
+
         // build scanner
         Scanner scan = new Scanner(System.in);
 

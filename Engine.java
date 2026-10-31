@@ -26,9 +26,9 @@ public class Engine {
     /*
     The audio_format describes how to read the raw bytes of a track. 
         -> audio_format = new AudioFormat(frequency, bit_rate, num_channels, signed_numbers, big_endian);
-            * frequency: frequency of music (for CDs always 44,100 samples per seccond)
-            * bits: bit rate of song. eg. 16 bits per sample
-            * channels: number of audio channels
+            * sample_rate: sample rate of music (for CDs always 44,100 samples per second)
+            * sample_size_bits: bit rate of song. eg. 16 bits per sample
+            * channels: number of audio channels (1 is mono and 2 is stereo.)
             * signed_numbers: boolean 
             * big_endian: boolean
     
@@ -46,6 +46,7 @@ public class Engine {
 
     // states (a volatile variable is shared between threads)
     private volatile boolean stop_requested = false;
+    private volatile boolean paused = false;
     private volatile boolean finished = false;
     // private volatile double level = 0;   
  
@@ -147,6 +148,7 @@ public class Engine {
 
         // build and start audio stream line
         if (!line_exist){
+            // "find an audio output that can play this format and hand me a connection to it.""
             line = AudioSystem.getSourceDataLine(audio_format);
             line.open(audio_format);
             line.start();
@@ -159,23 +161,46 @@ public class Engine {
         // 4096 is roughtly ~93 ms of audio
         int audio_chunk_size = 4096;
         byte[] chunk = new byte[audio_format.getFrameSize() * audio_chunk_size]; 
-        long bytes_to_read = data_length;
+        long remaining_bytes = data_length;
 
         // while remaining chunks exist
-        while (bytes_to_read > 0 && !stop_requested) {
+        while (remaining_bytes > 0 && !stop_requested) {
             // only read n chunks in memory (n is always an integer)
-            int curr_chunk = (int) Math.min(chunk.length, bytes_to_read);  
-            raf.readFully(chunk, 0, curr_chunk);
+            int bytes_to_read = (int) Math.min(chunk.length, remaining_bytes);  
+            raf.readFully(chunk, 0, bytes_to_read);
 
-            line.write(chunk, 0, curr_chunk);
+            int offset = 0;
+            while (offset < bytes_to_read && !stop_requested) {
+                if (paused) {
+                    // hold this chunk until resume() is called
+                    Thread.sleep(20);
+                    continue;
+                }
+
+
+                // write to the audio line (makes the audio)
+                // line.write(
+                    // chunk = byte array of audio data, 
+                    // offset = byte in that array to take from, 
+                    // length = how many bytes to send, starting from that index
+                    //)
+                    
+                int written = line.write(chunk, offset, bytes_to_read - offset);
+                offset += written;
+
+                if (written == 0){
+                    Thread.sleep(5);
+                }
+
+            }
 
             // remove played chunks from total
-            bytes_to_read -= curr_chunk;
+            remaining_bytes -= bytes_to_read;
         }
 
         // let the last buffered audio finish
         // if (!stop_requested) {
-        //     line.drain();  
+            // line.drain();  
         // }
 
         // // close the audio line
@@ -214,6 +239,24 @@ public class Engine {
         // start thread
         worker = new Thread(this::play_music_thread);
         worker.start();
+    }
+
+    public void pause(){
+        paused = true;
+        // safe pause method for if line changes 
+        SourceDataLine line_dup = line;
+        if (line_dup != null){
+            line_dup.stop();
+        }
+    }
+
+    public void resume(){
+        // safe play method for if line changes 
+        SourceDataLine line_dup = line;
+        if (line_dup != null){
+            line_dup.start();
+        }
+        paused = false;
     }
 
 
